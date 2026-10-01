@@ -264,6 +264,11 @@ symbol without those existing Objective-C dependencies linked.
   directory; the user signed in and the vault UI loaded. Its per-install native
   feature flag was enabled, followed by reload. Native status returned
   `support.password: true`, `support.fido2: true`, **`state.enabled: false`**.
+  Signature/bundle inspection subsequently confirmed that this desktop-only
+  launch copy has no host AutoFill entitlement and no embedded `.appex`. It is
+  therefore a desktop startup/IPC smoke test, not a complete provider installation
+  test; its disabled status alone does not establish a signing rejection. The
+  separate complete synthetic bundles and controlled launch matrix test signing.
 - A live request through the running desktop's native IPC rejected a nonexistent
   synthetic login with the expected unavailable-identity error. A separate native
   authentication smoke test returned **`outcome: verified`**, observed through
