@@ -9,7 +9,11 @@ import { ConfigService } from "@bitwarden/common/platform/abstractions/config/co
 import { Fido2AuthenticatorService as Fido2AuthenticatorServiceAbstraction } from "@bitwarden/common/platform/abstractions/fido2/fido2-authenticator.service.abstraction";
 import { LogService } from "@bitwarden/common/platform/abstractions/log.service";
 import { PlatformUtilsService } from "@bitwarden/common/platform/abstractions/platform-utils.service";
+import { UserId } from "@bitwarden/common/types/guid";
 import { CipherService } from "@bitwarden/common/vault/abstractions/cipher.service";
+import { CipherRepromptType, CipherType } from "@bitwarden/common/vault/enums";
+import { CipherView } from "@bitwarden/common/vault/models/view/cipher.view";
+import { LoginUriView } from "@bitwarden/common/vault/models/view/login-uri.view";
 
 import { DesktopAutofillService } from "./desktop-autofill.service";
 import { NativeWindowObject } from "./desktop-fido2-user-interface.service";
@@ -70,6 +74,182 @@ describe("DesktopAutofillService", () => {
       activeAccountStatus$.next(AuthenticationStatus.LoggedOut);
 
       await expect(service.doLockStatus()).resolves.toEqual({ isUnlocked: false });
+    });
+  });
+
+  describe("selected password credentials", () => {
+    // jsdom 26 omits this API; Electron's AbortSignal implements it natively.
+    const originalThrowIfAborted = AbortSignal.prototype.throwIfAborted;
+    beforeAll(() => {
+      AbortSignal.prototype.throwIfAborted = function () {
+        if (this.aborted) {
+          throw this.reason;
+        }
+      };
+    });
+    afterAll(() => {
+      AbortSignal.prototype.throwIfAborted = originalThrowIfAborted;
+    });
+    const userId = "00000000-0000-0000-0000-000000000001" as UserId;
+    const request = {
+      recordIdentifier: "login-1",
+      serviceIdentifier: "https://example.com",
+      username: "alice",
+      context: "password-1",
+    };
+    let account$: BehaviorSubject<any>;
+    let ciphers$: BehaviorSubject<CipherView[] | null>;
+    let cipher: CipherView;
+    let runCommand: jest.Mock;
+
+    beforeEach(() => {
+      (service as any).isEnabled = true;
+      account$ = new BehaviorSubject({ id: userId });
+      accountService.activeAccount$ = account$;
+      cipher = new CipherView();
+      cipher.id = request.recordIdentifier;
+      cipher.login.username = request.username;
+      cipher.login.password = "synthetic-password";
+      const uri = new LoginUriView();
+      uri.uri = request.serviceIdentifier;
+      cipher.login.uris = [uri];
+      ciphers$ = new BehaviorSubject<CipherView[] | null>([cipher]);
+      cipherService.cipherViews$.mockReturnValue(ciphers$);
+      runCommand = jest.fn().mockResolvedValue({ type: "success", value: { outcome: "verified" } });
+      (global as any).ipc = { autofill: { desktopAutofill: { runCommand } } };
+    });
+
+    afterEach(() => delete (global as any).ipc);
+
+    it("returns the selected current password only after native authorization", async () => {
+      await expect(service.doPasswordCredential(request, new AbortController())).resolves.toEqual({
+        username: "alice",
+        password: "synthetic-password",
+      });
+      expect(runCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "userVerification" }),
+      );
+    });
+
+    it.each([
+      [
+        "deleted",
+        (c: CipherView) => {
+          c.deletedDate = new Date();
+        },
+      ],
+      [
+        "archived",
+        (c: CipherView) => {
+          c.archivedDate = new Date();
+        },
+      ],
+      [
+        "reprompt",
+        (c: CipherView) => {
+          c.reprompt = CipherRepromptType.Password;
+        },
+      ],
+      [
+        "wrong type",
+        (c: CipherView) => {
+          c.type = CipherType.Card;
+        },
+      ],
+      [
+        "empty password",
+        (c: CipherView) => {
+          c.login.password = "";
+        },
+      ],
+      [
+        "changed username",
+        (c: CipherView) => {
+          c.login.username = "bob";
+        },
+      ],
+      [
+        "changed URI",
+        (c: CipherView) => {
+          c.login.uris![0].uri = "https://other.example";
+        },
+      ],
+    ])("rejects a %s identity before authorization", async (_name, change) => {
+      change(cipher);
+      await expect(service.doPasswordCredential(request, new AbortController())).rejects.toThrow();
+      expect(runCommand).not.toHaveBeenCalled();
+    });
+
+    it.each([AuthenticationStatus.Locked, AuthenticationStatus.LoggedOut])(
+      "rejects unavailable vault status %s",
+      async (status) => {
+        activeAccountStatus$.next(status);
+        await expect(
+          service.doPasswordCredential(request, new AbortController()),
+        ).rejects.toThrow();
+        expect(runCommand).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([null, []])("rejects an unavailable cipher collection %j", async (collection) => {
+      ciphers$.next(collection);
+      await expect(service.doPasswordCredential(request, new AbortController())).rejects.toThrow(
+        "selected password identity is unavailable",
+      );
+      expect(runCommand).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { type: "success", value: { outcome: "cancelled" } },
+      { type: "error", error: "verification unavailable" },
+    ])("rejects unsuccessful verification %j", async (result) => {
+      runCommand.mockResolvedValue(result);
+      await expect(service.doPasswordCredential(request, new AbortController())).rejects.toThrow(
+        "not authorized",
+      );
+    });
+
+    it.each(["lock", "account", "disable", "cancel", "delete", "reprompt"])(
+      "rejects %s during authorization",
+      async (change) => {
+        const abort = new AbortController();
+        runCommand.mockImplementation(async () => {
+          if (change === "lock") {
+            activeAccountStatus$.next(AuthenticationStatus.Locked);
+          }
+          if (change === "account") {
+            account$.next({ id: "other-user" });
+          }
+          if (change === "disable") {
+            (service as any).isEnabled = false;
+          }
+          if (change === "cancel") {
+            abort.abort(new Error("cancelled"));
+          }
+          if (change === "delete") {
+            ciphers$.next([]);
+          }
+          if (change === "reprompt") {
+            cipher.reprompt = CipherRepromptType.Password;
+          }
+          return { type: "success", value: { outcome: "verified" } };
+        });
+        await expect(service.doPasswordCredential(request, abort)).rejects.toThrow();
+      },
+    );
+
+    it("reads the latest password after authorization", async () => {
+      runCommand.mockImplementation(async () => {
+        const updated = new CipherView();
+        Object.assign(updated, cipher);
+        updated.login = { ...cipher.login, password: "updated-synthetic-password" } as any;
+        ciphers$.next([updated]);
+        return { type: "success", value: { outcome: "verified" } };
+      });
+      await expect(service.doPasswordCredential(request, new AbortController())).resolves.toEqual({
+        username: "alice",
+        password: "updated-synthetic-password",
+      });
     });
   });
 

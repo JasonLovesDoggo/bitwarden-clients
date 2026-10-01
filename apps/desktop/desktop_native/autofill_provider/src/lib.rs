@@ -4,6 +4,7 @@ uniffi::setup_scaffolding!("autofill_provider");
 
 mod assertion;
 mod lock_status;
+mod password;
 mod registration;
 mod window_handle_query;
 
@@ -40,6 +41,9 @@ pub use crate::{
         PasskeyAssertionWithoutUserInterfaceRequest, PreparePasskeyAssertionCallback,
     },
     lock_status::LockStatusResponse,
+    password::{
+        PasswordCredentialRequest, PasswordCredentialResponse, PreparePasswordCredentialCallback,
+    },
     registration::{
         PasskeyRegistrationRequest, PasskeyRegistrationResponse, PreparePasskeyRegistrationCallback,
     },
@@ -169,6 +173,7 @@ pub enum ExtensionRequest {
     CancelRequest(String),
     LockStatus,
     NativeStatus(NativeStatus),
+    PasswordCredential(PasswordCredentialRequest),
     PasskeyAssertion(PasskeyAssertionRequest),
     PasskeyAssertionWithoutUserInterface(PasskeyAssertionWithoutUserInterfaceRequest),
     PasskeyRegistration(PasskeyRegistrationRequest),
@@ -337,8 +342,8 @@ impl AutofillProviderClient {
                                 );
                                 match value {
                                     Ok(value) => {
-                                        if let Err(e) = cb.complete(value) {
-                                            error!(error = %e, "Error deserializing message");
+                                        if cb.complete(value).is_err() {
+                                            error!("Error deserializing message");
                                         }
                                     }
                                     Err(e) => {
@@ -351,8 +356,8 @@ impl AutofillProviderClient {
                                 error!(sequence_number, "No callback found for sequence number");
                             }
                         },
-                        Err(e) => {
-                            error!(error = %e, %message, "Error deserializing message");
+                        Err(_) => {
+                            error!("Error deserializing message");
                         }
                     };
                 }
@@ -404,6 +409,18 @@ impl AutofillProviderClient {
     ) {
         self.send_request(
             ExtensionRequest::PasskeyRegistration(request),
+            Some(Box::new(callback)),
+        );
+    }
+
+    /// Send an explicitly selected password identity to the desktop client.
+    pub fn prepare_password_credential(
+        &self,
+        request: PasswordCredentialRequest,
+        callback: Arc<dyn PreparePasswordCredentialCallback>,
+    ) {
+        self.send_request(
+            ExtensionRequest::PasswordCredential(request),
             Some(Box::new(callback)),
         );
     }

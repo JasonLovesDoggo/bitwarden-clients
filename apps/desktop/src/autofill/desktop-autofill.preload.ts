@@ -39,6 +39,11 @@ export const DesktopAutofillPreload = {
 
   listenCancelRequest: makeListener(AutofillIpcChannelIncoming.CancelRequest),
 
+  listenPasswordCredential: makeListener(
+    AutofillIpcChannelIncoming.PasswordCredential,
+    AutofillIpcChannelOutgoing.PasswordCredential,
+  ),
+
   listenLockStatus: makeListener(
     AutofillIpcChannelIncoming.LockStatus,
     AutofillIpcChannelOutgoing.LockStatus,

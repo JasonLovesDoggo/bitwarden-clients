@@ -137,6 +137,11 @@ export class DesktopAutofillMain {
     );
 
     // Register IPC listeners and response callbacks
+    const passwordCredentialCallback = this.makeListener(
+      AutofillIpcChannelIncoming.PasswordCredential,
+      AutofillIpcChannelOutgoing.PasswordCredential,
+      AutofillIpcServer.prototype.completePasswordCredential,
+    );
     const registrationCallback = this.makeListener(
       AutofillIpcChannelIncoming.PasskeyRegistration,
       AutofillIpcChannelOutgoing.PasskeyRegistration,
@@ -168,6 +173,7 @@ export class DesktopAutofillMain {
     const cancelRequestCallback = this.makeListener(AutofillIpcChannelIncoming.CancelRequest);
 
     this.ipcServer = await AutofillIpcServer.listen("af", {
+      passwordCredentialCallback,
       registrationCallback,
       assertionCallback,
       assertionWithoutUserInterfaceCallback,
