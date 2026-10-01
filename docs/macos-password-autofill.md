@@ -170,6 +170,24 @@ an authorized developer team. Having somebody else sign it does not require the
 end user to buy their own membership, but the fork's packaging still needs its own
 identifiers and a real native AutoFill test.
 
+### Third-party signing services
+
+These are research leads, not verified AutoFill solutions. Directory searches
+returned no matches; the findings below come from providers' own documentation.
+
+| Provider                                                                              | Documented offer                                                                                                   | Gap for this fork                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Seal Your App](https://sealyour.app/)                                                | Advertises macOS signing/notarization without customer developer accounts, from $5 per seal; CLI/API is $25/month. | Public pages show a waitlist. Its [API](https://sealyour.app/docs/api) does not document `.appex` handling, custom entitlements or AutoFill provisioning profiles. Availability and capability support require confirmation. |
+| [ToDesktop](https://www.todesktop.com/electron/docs/introduction/signing-application) | Cloud signing of Electron apps.                                                                                    | Requires the customer's Apple signing certificate; does not document supplying the missing signing authority.                                                                                                                |
+| [SignPath](https://docs.signpath.io/crypto-providers/macos)                           | Remote certificate/key access through macOS CryptoTokenKit.                                                        | Requires an appropriate Apple certificate. Its free OSS program was not verified as a source of Apple AutoFill authorization.                                                                                                |
+
+The useful service test is a signed **synthetic provider first**: both host and
+extension need Apple-authorized AutoFill entitlements, matching identifiers and
+profiles under the signing team. The full fork additionally needs matching App
+Groups. Verify launch, Settings activation and fake-password filling with SIP
+enabled before treating a service's ordinary signing/notarization offer as a
+solution. No service account, upload, payment or external message was made.
+
 ## Existing implementations and why this gap exists
 
 | Source                                                                             | Finding                                                                                                                                                                                                                       | Effect on this approach                                                                            |
