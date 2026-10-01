@@ -119,6 +119,17 @@ computer use verified these controls:
 | `ASSettingsHelper.requestToTurnOnCredentialProviderExtension` | `false`                                                                                        |
 | Save a synthetic password identity                            | `ASCredentialIdentityStoreErrorDomain`, code 0; calling process lacks the AutoFill entitlement |
 
+A fresh complete `AutoFill Signature Probe.app` repeated the check with **both
+host and extension** claiming only sandbox and AutoFill, without invented team or
+application-identifier entitlements. Both signatures were ad-hoc and passed
+`codesign --verify --deep --strict`. The user launched this copy through `open`;
+it failed with `RBSRequestErrorDomain` code 5 and underlying POSIX error 163.
+At 01:32:55 on October 1, `amfid` logged the host's exact path with the same
+restricted-entitlement error `-424`. `AuthenticationServicesAgent` also discovered
+its extension. Discovery and entitlement presence therefore succeeded, while
+host launch authorization failed. This was a user launch, not a computer-use
+launch: the automation tool denied access to this new app identity.
+
 The [activation helper](https://developer.apple.com/documentation/authenticationservices/assettingshelper)
 does not provide a signing override. `codesign` validity, plug-in registration,
 Gatekeeper approval, and capability authorization are distinct checks;
