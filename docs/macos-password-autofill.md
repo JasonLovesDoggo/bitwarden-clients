@@ -8,9 +8,10 @@ an OS signing block: adding only the AutoFill entitlement makes macOS kill the
 test process before it reaches `main`.
 
 Research and local checks were performed September 30–October 1, 2026, against this fork's
-Bitwarden desktop 2026.9.1 source. The test machine runs arm64 macOS 27.0.1 and has
-Command Line Tools, but no full Xcode, paid developer membership, signing identity,
-or provisioning profile.
+Bitwarden desktop 2026.9.1 source. The test machine runs arm64 macOS 27.0.1.
+Xcode 27.0 (27A266a) is now installed and its first-time setup is complete. The
+local probe has no signing team selected, and no valid code-signing identity is
+available. Provisioning and actual AutoFill activation remain unverified.
 
 ## What macOS actually needs
 
@@ -60,8 +61,9 @@ below. However, Apple's current macOS capability matrix does not support AutoFil
 in its free-account column. Changing bundle IDs and selecting a Personal Team
 does not change that capability eligibility. Enabling the capability must produce
 authorization for both targets, not only an entitlement claim in their signatures.
-The exact Xcode Personal Team workflow was **not tested** here because full Xcode
-is absent; its eligibility conclusion comes from Apple's documentation.
+The exact Xcode Personal Team workflow remains **untested**: Xcode is now installed,
+but no team has been configured for the probe and no authorized profiles have been
+produced. Its eligibility conclusion comes from Apple's documentation.
 
 [`ASSettingsHelper.requestToTurnOnCredentialProviderExtension`](<https://developer.apple.com/documentation/authenticationservices/assettingshelper/requesttoturnoncredentialproviderextension(completionhandler:)>)
 requests the user's activation of a contained provider. It does not issue the
@@ -289,6 +291,12 @@ symbol without those existing Objective-C dependencies linked.
   Apple's SDK with application-extension checking. The extension executable also
   links. Existing passkey capture warnings and local toolchain deployment-target
   warnings remain; this does not verify runtime compatibility with macOS 14.2.
+- Xcode 27.0 arm64 Debug builds of the synthetic host/provider workspace and
+  Bitwarden's native extension project pass with `CODE_SIGNING_ALLOWED=NO`.
+  Generated Rust/Swift bindings and the arm64 FFI framework are restored locally.
+  These compilation checks do not verify signing, provisioning or AutoFill.
+  Computer Use rejected access to the running Xcode window, so GUI setup was not
+  verified. Existing capture/deployment-target warnings remain.
 - Computer use launched the built Electron fork in an isolated local data
   directory; the user signed in and the vault UI loaded. Its per-install native
   feature flag was enabled, followed by reload. Native status returned
@@ -340,8 +348,8 @@ cargo test -p autofill_provider --features uniffi --lib
 
 ## What is needed for a real installation
 
-Install full Xcode, obtain a developer team/signing identity with the AutoFill
-capability, and produce a valid extension and containing app. The checked-in
+With Xcode installed, obtain a developer team/signing identity with the AutoFill
+capability and produce a valid extension and containing app. The checked-in
 Xcode and packaging scripts reference Bitwarden's signing identities and profiles;
 these are not credentials this fork can use. A separately signed fork needs its
 own bundle IDs, provisioning, and a consistent App Group across host, extension,
