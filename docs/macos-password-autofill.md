@@ -2,9 +2,10 @@
 
 This fork adds the missing **selected-password request path** to Bitwarden's existing
 macOS credential-provider extension. The code builds and focused tests pass. It is
-**not yet a working, end-to-end verified system AutoFill installation**: the local
-ad-hoc provider did not appear in AutoFill & Passwords, and native status remained
-`enabled: false`.
+**not yet a working, end-to-end verified system AutoFill installation**. The local
+ad-hoc provider never became selectable. A controlled minimal experiment isolates
+an OS signing block: adding only the AutoFill entitlement makes macOS kill the
+test process before it reaches `main`.
 
 Research and local checks were performed September 30–October 1, 2026, against this fork's
 Bitwarden desktop 2026.9.1 source. The test machine runs arm64 macOS 27.0.1 and has
@@ -32,16 +33,104 @@ defines the password request and completion lifecycle.
 Apple lists AutoFill credential provider support for paid Apple Developer Program
 and Developer ID signing, but not the free Apple Developer account column in its
 [macOS capability matrix](https://developer.apple.com/help/account/reference/supported-capabilities-macos).
-The supported signing route therefore needs paid membership even for this local
-capability; choosing not to distribute does not grant the entitlement. Membership
+The supported signing route therefore needs a paid developer team even for this
+local capability; choosing not to distribute does not grant the entitlement. This
+need not be the user's own membership if another authorized team signs the fork
+with its own identifiers and appropriate provisioning. Membership
 is [99 USD per year, or local currency where available](https://developer.apple.com/help/account/membership/program-enrollment),
 not a one-time purchase. Xcode itself is free.
 
 Ad-hoc signing writes a local signature and can embed entitlement claims. It does
-not establish Apple's authorization for a restricted capability. The local probe
-demonstrated that `codesign` and `pluginkit` success are insufficient evidence of
-usable password AutoFill. This experiment did not prove an exact rejection cause
-or that every conceivable unsupported local workaround is impossible.
+not establish Apple's authorization for a restricted capability. Apple's
+[TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)
+explains the distinction between claims and authorization: a provisioning profile
+is cryptographically signed by Apple and constrains the signer, app, devices,
+validity period, and entitlements. Locally inventing that profile or copying a
+profile without its authorized signing key does not authorize a modified fork.
+Ordinary sandbox and debugger entitlements are unrestricted on macOS; AutoFill
+is a separate capability. Apple requires its entitlement on
+[both the host and extension](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.authentication-services.autofill-credential-provider).
+
+## Can local signing bypass this?
+
+**No membership-free route was demonstrated with this Mac's security protections
+unchanged.** A bypass on a modified OS is plausible, but that is a different claim
+from ad-hoc signing being sufficient for a local app.
+
+```mermaid
+flowchart LR
+    Build[Local build] --> Signature[Valid ad-hoc signature]
+    Signature --> Gate{AutoFill entitlement?}
+    Gate -->|Claimed without authorization| Reject[AMFI kills process before main]
+    Gate -->|Omitted, sandbox-only control| Launch[Host launches]
+    Launch --> Missing[Identity publication rejects missing entitlement]
+```
+
+### Controlled launch test
+
+The same tiny Swift program (`print("Reached main")`) was placed in four complete
+app bundles and ad-hoc signed with different entitlement sets. All four passed
+`codesign --verify --strict`; execution used the binary inside its signed bundle.
+
+| Claims added to an ad-hoc signature             | Signature verification | Execution on macOS 27.0.1     |
+| ----------------------------------------------- | ---------------------- | ----------------------------- |
+| Sandbox only                                    | Pass                   | Prints `Reached main`; exit 0 |
+| Sandbox + AutoFill only, no fake team or App ID | Pass                   | SIGKILL before `main`         |
+| Sandbox + invented team and App ID, no AutoFill | Pass                   | SIGKILL before `main`         |
+| Sandbox + AutoFill + invented team and App ID   | Pass                   | SIGKILL before `main`         |
+
+For the AutoFill-only variant, `amfid` reported
+`AppleMobileFileIntegrityError Code=-424`:
+
+> The file is adhoc signed but contains restricted entitlements
+
+This isolates AutoFill itself from the fake identifiers, nib resources, Bitwarden,
+and vault IPC. Launching that diagnostic under LLDB also failed, with the same
+AMFI error in the log. This was an ordinary debugger launch of our own program,
+not an attempt to patch the system signing daemon.
+
+A separate programmatic host and credential-provider extension removed the nib
+dependency and used only a fixed fake login. Claiming AutoFill in its ad-hoc host
+also failed at launch with `-424`. After removing the host's restricted claims,
+computer use verified these controls:
+
+| Synthetic host operation                                      | Observed result                                                                                |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Launch                                                        | Window opens                                                                                   |
+| Read identity store state                                     | `enabled: false`                                                                               |
+| `ASSettingsHelper.requestToTurnOnCredentialProviderExtension` | `false`                                                                                        |
+| Save a synthetic password identity                            | `ASCredentialIdentityStoreErrorDomain`, code 0; calling process lacks the AutoFill entitlement |
+
+The [activation helper](https://developer.apple.com/documentation/authenticationservices/assettingshelper)
+does not provide a signing override. `codesign` validity, plug-in registration,
+Gatekeeper approval, and capability authorization are distinct checks;
+[TN2206](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)
+describes the differing trust policies used by macOS subsystems. Changing a
+Gatekeeper setting would not address the entitlement failure isolated here.
+
+### Deeper bypass projects: research leads, not an AutoFill solution
+
+| Primary source                                                                                      | What its authors demonstrate or claim                                                                                                                                                                                              | Remaining gap                                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`amfi-allow`](https://github.com/Lakr233/amfi-allow/tree/aabe81d621f0824fd3247e13201a0700a9cffb8e) | Per-code-hash entitlement allowance on Apple Silicon macOS 26/27, requiring root and relaxed SIP debugging restrictions. Its source writes an `amfid` heap flag and a gated preference; it avoids executable-instruction patching. | Its reported workload uses private virtualization entitlements, not AutoFill. It does not establish provider discovery, activation, or successful password completion. |
+| [`amfree`](https://github.com/retX0/amfree)                                                         | Userspace `amfid` validation hooking, also requiring root and relaxed SIP debugging restrictions.                                                                                                                                  | Its README explicitly excludes kernel AMFI restrictions. No working AutoFill provider is demonstrated.                                                                 |
+
+These sources make it inaccurate to say every local bypass is impossible.
+They also do not prove this fork can fill passwords using one. Rebuilds, daemon
+restarts, cached verdicts, and independent capability checks remain considerations.
+Neither tool was installed or run; SIP remained enabled, as the user requested.
+An older [fake-certificate CoreTrust proof of concept](https://worthdoingbadly.com/coretrust/)
+did work with SIP enabled on macOS 12.3.1, but its author reproduced rejection on
+12.4 and attributes the change to the patched certificate-validation bug
+[`CVE-2022-26766`](https://support.apple.com/en-ca/102871), also listed in Apple's
+12.4 security notes. That historical exploit is not evidence of a working route on
+this macOS 27.0.1 machine. No current SIP-preserving AutoFill signing bypass was
+verified in this research.
+
+The practical supported alternative is a correctly signed/provisioned build from
+an authorized developer team. Having somebody else sign it does not require the
+end user to buy their own membership, but the fork's packaging still needs its own
+identifiers and a real native AutoFill test.
 
 ## Existing implementations and why this gap exists
 
@@ -126,7 +215,7 @@ symbol without those existing Objective-C dependencies linked.
 | Existing passkey functionality                              | Existing request handlers retained; no live passkey regression test performed |
 | Firefox/Chrome browser extension replacement                | Not established; continue using their browser integrations                    |
 | Turn on the feature for everyone                            | No; shared default remains off                                                |
-| Paid membership or signing bypass                           | No working membership-free provider demonstrated                              |
+| Paid membership or signing bypass                           | No working membership-free provider demonstrated with SIP unchanged           |
 
 ## Local validation and its limits
 
@@ -152,16 +241,11 @@ symbol without those existing Objective-C dependencies linked.
   synthetic login with the expected unavailable-identity error. A separate native
   authentication smoke test returned **`outcome: verified`**, observed through
   computer use. Neither test requested a saved vault password.
-- An ad-hoc registration probe used the actual compiled extension controller in
-  a separate host app. `pluginkit` listed it, and Settings diagnostics discovered
-  it, but computer use confirmed it was absent from AutoFill & Passwords after
-  reopening the page. The probe lacks the normal Xcode-built nib resources and
-  valid provisioning; it is a registration experiment, not a complete app package.
-- A second probe gave both host and extension matching ad-hoc AutoFill entitlement,
-  local team-identifier, application-identifier, and App Group claims. The host ran
-  and `pluginkit` still listed the extension, but reopening AutoFill & Passwords
-  still showed only Apple Passwords. Matching locally written claims did not make
-  this probe a selectable provider.
+- Earlier ad-hoc registration probes appeared in `pluginkit` but were absent from
+  AutoFill & Passwords after reopening the page. Those experiments had packaging
+  and process/cache confounds and did not isolate the rejection cause. The clean
+  launch matrix and programmatic synthetic probe above provide stronger evidence;
+  an earlier apparent host launch is not proof of accepted restricted claims.
 
 **A real password fill from Safari or a native app has not been verified.** Do not
 treat passing source tests or a plug-in registration as proof of that result.
