@@ -295,8 +295,13 @@ symbol without those existing Objective-C dependencies linked.
   Bitwarden's native extension project pass with `CODE_SIGNING_ALLOWED=NO`.
   Generated Rust/Swift bindings and the arm64 FFI framework are restored locally.
   These compilation checks do not verify signing, provisioning or AutoFill.
-  Computer Use rejected access to the running Xcode window, so GUI setup was not
-  verified. Existing capture/deployment-target warnings remain.
+  Computer Use opened `BitwardenAutoFill.xcworkspace` with the
+  **AutoFillPersonalTeamProbe / My Mac** scheme and inspected both probe targets'
+  Signing & Capabilities panels. Both show automatic signing, App Sandbox,
+  AutoFill Credential Provider, and the expected fork-owned bundle IDs. Both
+  require a development team and offer Add Account; no account/team was configured.
+  Provisioning and actual AutoFill remain unverified. Existing
+  capture/deployment-target warnings remain.
 - Computer use launched the built Electron fork in an isolated local data
   directory; the user signed in and the vault UI loaded. Its per-install native
   feature flag was enabled, followed by reload. Native status returned
