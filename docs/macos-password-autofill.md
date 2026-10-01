@@ -127,6 +127,15 @@ did work with SIP enabled on macOS 12.3.1, but its author reproduced rejection o
 this macOS 27.0.1 machine. No current SIP-preserving AutoFill signing bypass was
 verified in this research.
 
+Reusing the installed Bitwarden app was also checked without modifying it:
+`/Applications/Bitwarden.app` contains a Safari extension, no native credential
+provider, and neither an AutoFill nor a `get-task-allow` entitlement. It cannot
+supply an already authorized native provider for this patch. Apple's
+[debugger entitlement documentation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger)
+also requires the target's debugger permission; no runtime attachment was tried.
+A separately signed provider deliberately designed to accept external data/code
+is conceivable, but no compatible implementation was verified.
+
 The practical supported alternative is a correctly signed/provisioned build from
 an authorized developer team. Having somebody else sign it does not require the
 end user to buy their own membership, but the fork's packaging still needs its own
