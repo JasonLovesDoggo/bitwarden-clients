@@ -34,7 +34,7 @@ import { getCredentialsForAutofill } from "@bitwarden/common/platform/services/f
 import { Fido2Utils } from "@bitwarden/common/platform/services/fido2/fido2-utils";
 import { UserId } from "@bitwarden/common/types/guid";
 import { CipherService } from "@bitwarden/common/vault/abstractions/cipher.service";
-import { CipherType } from "@bitwarden/common/vault/enums";
+import { CipherRepromptType, CipherType } from "@bitwarden/common/vault/enums";
 import { CipherView } from "@bitwarden/common/vault/models/view/cipher.view";
 import { autofill } from "@bitwarden/desktop-napi";
 type PasskeyAssertionRequest = autofill.PasskeyAssertionRequest;
@@ -51,6 +51,7 @@ import {
   AutofillPasswordCredential,
   AutofillSyncCommand,
 } from "../models/autofill-sync.command";
+import { AutofillUserVerificationCommand } from "../models/autofill-user-verification.command";
 import { IpcListenerBindFn } from "../models/ipc-handler.type";
 
 import type { NativeWindowObject } from "./desktop-fido2-user-interface.service";
@@ -70,7 +71,7 @@ export class DesktopAutofillService implements OnDestroy {
     private fido2AuthenticatorService: Fido2AuthenticatorServiceAbstraction<NativeWindowObject>,
     private accountService: AccountService,
     private authService: AuthService,
-    platformUtilsService: PlatformUtilsService,
+    private platformUtilsService: PlatformUtilsService,
   ) {
     const deviceType = platformUtilsService.getDevice();
     if (deviceType === DeviceType.MacOsDesktop) {
@@ -176,6 +177,8 @@ export class DesktopAutofillService implements OnDestroy {
         .filter(
           (cipher) =>
             !cipher.isDeleted &&
+            !cipher.archivedDate &&
+            cipher.reprompt === CipherRepromptType.None &&
             cipher.type === CipherType.Login &&
             cipher.login.uris?.length > 0 &&
             cipher.login.uris.some(
@@ -263,6 +266,90 @@ export class DesktopAutofillService implements OnDestroy {
     return this.convertRegistrationResponse(request, response);
   }
 
+  /** Minimal password support: an OS-selected identity from the unlocked active vault. */
+  async doPasswordCredential(
+    request: autofill.PasswordCredentialRequest,
+    abortController: AbortController,
+  ): Promise<autofill.PasswordCredentialResponse> {
+    const signal = abortController.signal;
+    signal.throwIfAborted();
+    if (this.platformUtilsService.getDevice() !== DeviceType.MacOsDesktop || !this.isEnabled) {
+      throw new Error("Native macOS password autofill is disabled");
+    }
+    const account = await firstValueFrom(this.accountService.activeAccount$);
+    if (!account) {
+      throw new Error("Unlock Bitwarden and retry autofill");
+    }
+    await this.passwordCipher(request, account.id, signal);
+
+    const verification =
+      await ipc.autofill.desktopAutofill.runCommand<AutofillUserVerificationCommand>({
+        namespace: "autofill",
+        command: "userVerification",
+        params: {
+          username: request.username,
+          displayHint: `Fill the password for ${request.username} at ${request.serviceIdentifier}`,
+        },
+      });
+    signal.throwIfAborted();
+    if (verification.type !== "success" || verification.value.outcome !== "verified") {
+      throw new Error("Password autofill was not authorized");
+    }
+
+    // Read again: the vault, account, or login may have changed during the OS prompt.
+    const cipher = await this.passwordCipher(request, account.id, signal);
+    const [currentAccount, status] = await firstValueFrom(
+      combineLatest([this.accountService.activeAccount$, this.authService.activeAccountStatus$]),
+    );
+    signal.throwIfAborted();
+    if (
+      !this.isEnabled ||
+      currentAccount?.id !== account.id ||
+      status !== AuthenticationStatus.Unlocked
+    ) {
+      throw new Error("The active vault changed during password autofill");
+    }
+    return { username: cipher.login.username!, password: cipher.login.password! };
+  }
+
+  private async passwordCipher(
+    request: autofill.PasswordCredentialRequest,
+    userId: UserId,
+    signal: AbortSignal,
+  ): Promise<CipherView> {
+    const [account, status, ciphers] = await firstValueFrom(
+      combineLatest([
+        this.accountService.activeAccount$,
+        this.authService.activeAccountStatus$,
+        this.cipherService.cipherViews$(userId),
+      ]),
+    );
+    signal.throwIfAborted();
+    if (!this.isEnabled || account?.id !== userId || status !== AuthenticationStatus.Unlocked) {
+      throw new Error("Unlock the active Bitwarden vault and retry autofill");
+    }
+    const cipher = ciphers?.find((cipher) => cipher.id === request.recordIdentifier);
+    const uri = cipher?.login?.uris?.find(
+      (uri) => uri.match !== UriMatchStrategy.Never && !Utils.isNullOrWhitespace(uri.uri),
+    )?.uri;
+    if (
+      !cipher ||
+      cipher.isDeleted ||
+      cipher.archivedDate ||
+      cipher.decryptionFailure ||
+      cipher.type !== CipherType.Login ||
+      cipher.reprompt !== CipherRepromptType.None ||
+      Utils.isNullOrWhitespace(cipher.login.password) ||
+      Utils.isNullOrWhitespace(cipher.login.username) ||
+      cipher.login.username !== request.username ||
+      !uri ||
+      uri !== request.serviceIdentifier
+    ) {
+      throw new Error("The selected password identity is unavailable; unlock and resync Bitwarden");
+    }
+    return cipher;
+  }
+
   async doPasskeyAssertion(
     request: PasskeyAssertionRequest,
     abortController: AbortController,
@@ -329,6 +416,12 @@ export class DesktopAutofillService implements OnDestroy {
     const ipcDesktopAutofill = ipc.autofill.desktopAutofill;
     // These must be arrow functions to bind `this` properly.
     this.makeListener(ipcDesktopAutofill.listenCancelRequest, (ctx) => this.doCancelRequest(ctx));
+
+    this.makeListener(
+      ipcDesktopAutofill.listenPasswordCredential,
+      (request, abortController) => this.doPasswordCredential(request, abortController),
+      (request) => request.context,
+    );
 
     this.makeListener(
       ipcDesktopAutofill.listenPasskeyRegistration,

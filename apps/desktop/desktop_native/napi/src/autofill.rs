@@ -4,7 +4,8 @@ pub mod autofill {
         BitwardenError, ExtensionRequest, ExtensionRequestMessage, LockStatusResponse,
         NativeStatus, PasskeyAssertionRequest, PasskeyAssertionResponse,
         PasskeyAssertionWithoutUserInterfaceRequest, PasskeyRegistrationRequest,
-        PasskeyRegistrationResponse, WindowHandleQueryResponse,
+        PasskeyRegistrationResponse, PasswordCredentialRequest, PasswordCredentialResponse,
+        WindowHandleQueryResponse,
     };
     use desktop_core::ipc::server::{Message, MessageType};
     use napi::{
@@ -35,6 +36,14 @@ pub mod autofill {
     // callbacks directly.
     #[napi(object, object_to_js = false)]
     pub struct AutofillIpcCallbacks {
+        /// An explicitly selected macOS password identity. Replies must be client-specific.
+        #[napi(ts_type = "{ \
+            (error: null, clientId: number, sequenceNumber: number, message: PasswordCredentialRequest): void; \
+            (error: Error, clientId: number, sequenceNumber: number, message: null): void; \
+        }")]
+        pub password_credential_callback:
+            ThreadsafeFunction<FnArgs<(u32, u32, PasswordCredentialRequest)>>,
+
         /// Function to execute when a passkey registration request is received.
         ///
         /// The `context` field should be stored, as the cancel_request_callback
@@ -141,6 +150,13 @@ pub mod autofill {
                                     }
                                 };
                             match msg.request {
+                                ExtensionRequest::PasswordCredential(request) => {
+                                    let params = (client_id, msg.sequence_number, request);
+                                    callbacks.password_credential_callback.call(
+                                        Ok(params.into()),
+                                        ThreadsafeFunctionCallMode::NonBlocking,
+                                    );
+                                }
                                 ExtensionRequest::CancelRequest(context) => {
                                     let params = (client_id, msg.sequence_number, context);
                                     callbacks.cancel_request_callback.call(
@@ -231,6 +247,20 @@ pub mod autofill {
         }
 
         #[napi]
+        pub fn complete_password_credential(
+            &self,
+            client_id: u32,
+            sequence_number: u32,
+            response: PasswordCredentialResponse,
+        ) -> napi::Result<u32> {
+            let message = PasskeyMessage {
+                sequence_number,
+                value: Ok(response),
+            };
+            self.send(client_id, serde_json::to_string(&message).unwrap())
+        }
+
+        #[napi]
         pub fn complete_registration(
             &self,
             client_id: u32,
@@ -300,13 +330,11 @@ pub mod autofill {
             self.send(client_id, serde_json::to_string(&message).unwrap())
         }
 
-        // TODO: Add a way to send a message to a specific client?
-        fn send(&self, _client_id: u32, message: String) -> napi::Result<u32> {
+        fn send(&self, client_id: u32, message: String) -> napi::Result<u32> {
             self.server
-                .send(message)
+                .send_to(client_id, message)
                 .map_err(|e| napi::Error::from_reason(format!("Error sending message: {e:?}")))
-                // NAPI doesn't support u64 or usize, so we need to convert to u32
-                .map(|u| u32::try_from(u).unwrap_or_default())
+                .map(|()| 1)
         }
     }
 }

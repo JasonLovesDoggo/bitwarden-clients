@@ -23,6 +23,7 @@ export const AutofillIpcChannelIncoming = Object.freeze({
   CancelRequest: "autofill.cancelRequest",
   LockStatus: "autofill.lockStatus",
   NativeStatus: "autofill.nativeStatus",
+  PasswordCredential: "autofill.passwordCredential",
   PasskeyAssertion: "autofill.passkeyAssertion",
   PasskeyAssertionWithoutUserInterface: "autofill.passkeyAssertionWithoutUserInterface",
   PasskeyRegistration: "autofill.passkeyRegistration",
@@ -33,6 +34,7 @@ export type AutofillIpcChannelIncoming =
 export const AutofillIpcChannelOutgoing = Object.freeze({
   Error: "autofill.completeError",
   LockStatus: "autofill.completeLockStatus",
+  PasswordCredential: "autofill.completePasswordCredential",
   PasskeyAssertion: "autofill.completePasskeyAssertion",
   PasskeyRegistration: "autofill.completePasskeyRegistration",
 } as const);
@@ -48,6 +50,11 @@ export type AutofillIpcChannelOutgoing =
  * `outgoing?: never` marks a fire-and-forget channel that expects no response.
  */
 export type AutofillIpcDefinitionMap = {
+  [AutofillIpcChannelIncoming.PasswordCredential]: {
+    request: autofill.PasswordCredentialRequest;
+    response: autofill.PasswordCredentialResponse;
+    outgoing: typeof AutofillIpcChannelOutgoing.PasswordCredential;
+  };
   [AutofillIpcChannelIncoming.CancelRequest]: {
     request: string;
     response: void;

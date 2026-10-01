@@ -55,6 +55,22 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
         return context
     }
 
+    private func passwordRequestIsActive(_ context: String) -> Bool {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+        return inFlightRequestContext == context
+    }
+
+    // Password callbacks and terminal events run on the main queue. A late
+    // callback must never complete a dismissed, timed out, or replaced request.
+    private func finishPasswordRequest(_ context: String) -> Bool {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+        guard inFlightRequestContext == context else { return false }
+        inFlightRequestContext = nil
+        return true
+    }
+
     // We changed the getClient method to be async, here's why:
     // This is so that we can check if the app is running, and launch it, without blocking the main thread
     // Blocking the main thread caused MacOS layouting to 'fail' or at least be very delayed, which caused our getWindowPositioning code to sent 0,0.
@@ -176,6 +192,9 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
 
             // If we just disconnected, try to cancel the request
             if currentStatus == .disconnected {
+                if let context = takeInFlightContext() {
+                    client.cancelRequest(context: context)
+                }
                 self.extensionContext.cancelRequest(withError: BitwardenError.Disconnected)
             }
         }
@@ -310,6 +329,75 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
        return
     }
 
+    override func provideCredentialWithoutUserInteraction(for credentialIdentity: ASPasswordCredentialIdentity) {
+        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
+    override func prepareInterfaceToProvideCredential(for credentialIdentity: ASPasswordCredentialIdentity) {
+        providePassword(for: credentialIdentity)
+    }
+
+    // The first version only fills identities selected from the OS suggestions.
+    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        extensionContext.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
+    }
+
+    private func providePassword(for identity: ASPasswordCredentialIdentity) {
+        guard let recordIdentifier = identity.recordIdentifier else {
+            extensionContext.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
+            return
+        }
+        let context = UUID().uuidString
+        // Register cancellation before connection startup can suspend.
+        beginRequest(context)
+        let timeoutTimer = DispatchWorkItem { [weak self] in
+            guard let self, self.finishPasswordRequest(context) else { return }
+            self.client?.cancelRequest(context: context)
+            self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: timeoutTimer)
+
+        class CallbackImpl: PreparePasswordCredentialCallback {
+            let complete: (PasswordCredentialResponse) -> Void
+            let fail: () -> Void
+            init(complete: @escaping (PasswordCredentialResponse) -> Void, fail: @escaping () -> Void) {
+                self.complete = complete
+                self.fail = fail
+            }
+            func onComplete(credential: PasswordCredentialResponse) { complete(credential) }
+            func onError(error: BitwardenError) { fail() }
+        }
+
+        let callback = CallbackImpl(complete: { [weak self] credential in
+            DispatchQueue.main.async {
+                guard let self, self.finishPasswordRequest(context) else { return }
+                timeoutTimer.cancel()
+                self.extensionContext.completeRequest(
+                    withSelectedCredential: ASPasswordCredential(user: credential.username, password: credential.password),
+                    completionHandler: nil
+                )
+            }
+        }, fail: { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.finishPasswordRequest(context) else { return }
+                timeoutTimer.cancel()
+                self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            }
+        })
+
+        Task { @MainActor in
+            guard passwordRequestIsActive(context) else { return }
+            let client = await getClient()
+            guard passwordRequestIsActive(context) else { return }
+            client.preparePasswordCredential(request: PasswordCredentialRequest(
+                recordIdentifier: recordIdentifier,
+                serviceIdentifier: identity.serviceIdentifier.identifier,
+                username: identity.user,
+                context: context
+            ), callback: callback)
+        }
+    }
+
     /*
      Implement this method if provideCredentialWithoutUserInteraction(for:) can fail with
      ASExtensionError.userInteractionRequired. In this case, the system may present your extension's
@@ -317,6 +405,11 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
      by completing the extension request with the associated ASPasswordCredential.
      */
     override func prepareInterfaceToProvideCredential(for credentialRequest: ASCredentialRequest) {
+        if let request = credentialRequest as? ASPasswordCredentialRequest,
+           let identity = request.credentialIdentity as? ASPasswordCredentialIdentity {
+            providePassword(for: identity)
+            return
+        }
         let timeoutTimer = createTimer()
         if let request = credentialRequest as? ASPasskeyCredentialRequest {
             if let passkeyIdentity = request.credentialIdentity as? ASPasskeyCredentialIdentity {

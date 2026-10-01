@@ -135,6 +135,18 @@ export declare namespace autofill {
     /** WebAuthn attestation object. */
     attestationObject: Array<number>
   }
+  /** A password identity explicitly selected from the system's suggestions. */
+  export interface PasswordCredentialRequest {
+    recordIdentifier: string
+    serviceIdentifier: string
+    username: string
+    context: string
+  }
+  /** Passwords must not be included in Debug output or persisted by the extension. */
+  export interface PasswordCredentialResponse {
+    username: string
+    password: string
+  }
   /** Coordinates representing a point on the screen. */
   export interface Position {
     x: number
@@ -207,6 +219,7 @@ export declare namespace autofill {
     getPaths(): Array<string>
     /** Stop the IPC server. */
     stop(): void
+    completePasswordCredential(clientId: number, sequenceNumber: number, response: PasswordCredentialResponse): number
     completeRegistration(clientId: number, sequenceNumber: number, response: PasskeyRegistrationResponse): number
     completeAssertion(clientId: number, sequenceNumber: number, response: PasskeyAssertionResponse): number
     completeLockStatus(clientId: number, sequenceNumber: number, response: LockStatusResponse): number
@@ -214,12 +227,14 @@ export declare namespace autofill {
     completeError(clientId: number, sequenceNumber: number, error: string): number
   }
   export interface AutofillIpcCallbacks {
-    /**
-     * Function to execute when a passkey registration request is received.
-     *
-     * The `context` field should be stored, as the cancel_request_callback
-     * will use the same value to identify the request to be cancelled.
-     */
+    /** An explicitly selected macOS password identity. Replies must be client-specific. */
+  passwordCredentialCallback: { (error: null, clientId: number, sequenceNumber: number, message: PasswordCredentialRequest): void; (error: Error, clientId: number, sequenceNumber: number, message: null): void; }
+  /**
+   * Function to execute when a passkey registration request is received.
+   *
+   * The `context` field should be stored, as the cancel_request_callback
+   * will use the same value to identify the request to be cancelled.
+   */
   registrationCallback: { (error: null, clientId: number, sequenceNumber: number, message: PasskeyRegistrationRequest): void; (error: Error, clientId: number, sequenceNumber: number, message: null): void; }
   /**
    * Function to execute when a passkey assertion request is received.
