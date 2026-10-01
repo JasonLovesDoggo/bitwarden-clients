@@ -51,6 +51,24 @@ Ordinary sandbox and debugger entitlements are unrestricted on macOS; AutoFill
 is a separate capability. Apple requires its entitlement on
 [both the host and extension](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.authentication-services.autofill-credential-provider).
 
+### Why a free Personal Team does not resolve step 4
+
+Apple calls an Xcode account without program membership a
+[Personal Team](https://developer.apple.com/help/account/basics/about-your-developer-account).
+Free local development signing is different from the ad-hoc signature tested
+below. However, Apple's current macOS capability matrix does not support AutoFill
+in its free-account column. Changing bundle IDs and selecting a Personal Team
+does not change that capability eligibility. Enabling the capability must produce
+authorization for both targets, not only an entitlement claim in their signatures.
+The exact Xcode Personal Team workflow was **not tested** here because full Xcode
+is absent; its eligibility conclusion comes from Apple's documentation.
+
+[`ASSettingsHelper.requestToTurnOnCredentialProviderExtension`](<https://developer.apple.com/documentation/authenticationservices/assettingshelper/requesttoturnoncredentialproviderextension(completionhandler:)>)
+requests the user's activation of a contained provider. It does not issue the
+signing authorization missing at the preceding step. The synthetic probe's false
+activation result is an observation about that ad-hoc installation, not a direct
+test of a Personal Team provisioning attempt.
+
 ## Can local signing bypass this?
 
 **No membership-free route was demonstrated with this Mac's security protections
