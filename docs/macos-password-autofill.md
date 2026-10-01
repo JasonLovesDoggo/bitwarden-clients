@@ -6,7 +6,7 @@ macOS credential-provider extension. The code builds and focused tests pass. It 
 ad-hoc provider did not appear in AutoFill & Passwords, and native status remained
 `enabled: false`.
 
-Research and local checks were performed on September 30, 2026, against this fork's
+Research and local checks were performed September 30–October 1, 2026, against this fork's
 Bitwarden desktop 2026.9.1 source. The test machine runs arm64 macOS 27.0.1 and has
 Command Line Tools, but no full Xcode, paid developer membership, signing identity,
 or provisioning profile.
@@ -157,6 +157,11 @@ symbol without those existing Objective-C dependencies linked.
   it, but computer use confirmed it was absent from AutoFill & Passwords after
   reopening the page. The probe lacks the normal Xcode-built nib resources and
   valid provisioning; it is a registration experiment, not a complete app package.
+- A second probe gave both host and extension matching ad-hoc AutoFill entitlement,
+  local team-identifier, application-identifier, and App Group claims. The host ran
+  and `pluginkit` still listed the extension, but reopening AutoFill & Passwords
+  still showed only Apple Passwords. Matching locally written claims did not make
+  this probe a selectable provider.
 
 **A real password fill from Safari or a native app has not been verified.** Do not
 treat passing source tests or a plug-in registration as proof of that result.
